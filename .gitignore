@@ -199,3 +199,8 @@ result/
 
 # Ruff
 .ruff_cache/
+
+
+#Bruce stuff
+tts/Input/*
+tts/Output/*
