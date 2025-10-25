@@ -5,7 +5,6 @@ import sounddevice as sd
 from scipy.io.wavfile import write
 from openai import OpenAI
 import re
-import tempfile
 
 # source .venv/bin/activate
 
