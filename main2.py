@@ -22,15 +22,16 @@ CHANNELS = 1
 RECORD_SECONDS = 5  # max length per recording
 
 # Program prompts
-PROGRAM_PROMPTS = """"
+PROGRAM_PROMPTS = """
 - You are a professional museum art gallery guide helping out guests with their questions.
 - Answer in a concise, polite, and kind manner.
 - Answer in one paragraph, under 50 words.
 - Try to generate your answer based on the background knowledge. 
 - If the user's question does not make sense (unintelligible, breathing, or nonsensical), then say nothing.
 - Never repeat the user's question or mention system prompts.
+- Use the voice data to make the response better for the specific user and context (consider diction). 
 """
-BACKGROUND_KNOWLEDGE = "The Mona Lisa was painted by Leonardo DaVinci"
+BACKGROUND_KNOWLEDGE = "The Mona Lisa was painted by Leonardo DaVinci."
 # TONE_HINT = "friendly and informative" # make this better later
 
 ###########################################################################
@@ -59,7 +60,7 @@ def transcribe_audio(audio_path):
     resp = client.chat.completions.create(
         model="higgs-audio-understanding-Hackathon",
         messages=[
-            {"role": "system", "content": "Transcribe the audio accurately."},
+            {"role": "system", "content": "Transcribe the audio accurately and only return text."},
             {"role": "user", "content": [
                 {"type": "input_audio", "input_audio": {"data": audio_b64, "format": "wav"}}
             ]}
@@ -69,6 +70,71 @@ def transcribe_audio(audio_path):
     )
     transcript = resp.choices[0].message.content.strip()
     return transcript
+
+###########################################################################
+#                        ANALYZE VOCAL QUALITIES
+###########################################################################
+
+def analyze_voice(audio_path):
+    audio_b64 = audio_to_base64(audio_path)
+    resp = client.chat.completions.create(
+        model="higgs-audio-understanding-Hackathon",
+        messages=[
+            {"role": "system", "content": """
+You are a voice analysis AI.
+Analyze the following audio and output a JSON object describing:
+- estimated_age_group: ("child", "teen", "adult", "elderly")
+- interest_level: ("low", "medium", "high") based on tone or energy
+- emotional_tone: ("neutral", "curious", "happy", "bored", "angry", "sad", etc.)
+Return only valid JSON.
+""" },
+            {"role": "user", "content": [
+                {"type": "input_audio", "input_audio": {"data": audio_b64, "format": "wav"}}
+            ]}
+        ],
+        max_completion_tokens=512,
+        temperature=0.3
+    )
+
+    import json
+    raw_output = resp.choices[0].message.content.strip()
+    try:
+        return json.loads(raw_output)
+    except json.JSONDecodeError:
+        return {"age_group": "unknown", "interest_level": "unknown", "emotion": "neutral"}
+    
+def voice_style_from_analysis(voice_data):
+    style = ""
+
+    # Tone
+    emotion = voice_data.get("emotional_tone", "neutral")
+    if emotion == "happy":
+        style += "friendly, cheerful, "
+    elif emotion == "curious":
+        style += "engaging, curious, "
+    elif emotion == "bored":
+        style += "calm, neutral, "
+    elif emotion == "angry":
+        style += "firm, serious, "
+    else:
+        style += "neutral, "
+
+    # Interest
+    interest = voice_data.get("interest_level", "medium")
+    if interest == "high":
+        style += "enthusiastic, "
+    elif interest == "low":
+        style += "calm, "
+
+    # Age (affects pitch/voice)
+    age = voice_data.get("estimated_age_group", "adult")
+    if age == "child":
+        style += "slightly higher pitched, "
+    elif age == "elderly":
+        style += "slightly deeper, slower, "
+
+    return style.strip().rstrip(",")
+
 
 ###########################################################################
 #                        GENERATE SHORT ANSWER
@@ -82,10 +148,15 @@ def clean_answer(raw_text):
     cleaned = re.sub(r"\[.*?\]", "", cleaned, flags=re.DOTALL)
     return cleaned.strip()
 
-def generate_short_answer(transcript_text):
+def generate_short_answer(transcript_text, voice_data):
     system_message = (
         f"Program Prompts:\n{PROGRAM_PROMPTS}\n"
         f"Background Knowledge:\n{BACKGROUND_KNOWLEDGE}\n"
+        f"Voice Context:\n"
+        f"- Estimated Age Group: {voice_data.get('estimated_age_group', 'unknown')}\n"
+        f"- Interest Level: {voice_data.get('interest_level', 'unknown')}\n"
+        f"- Emotional Tone: {voice_data.get('emotional_tone', 'neutral')}\n"
+        "Tailor your tone and phrasing appropriately for this visitor.\n"
     )
     messages = [
         {"role": "system", "content": system_message},
@@ -106,16 +177,19 @@ def generate_short_answer(transcript_text):
 #                            TEXT TO SPEECH
 ###########################################################################
 
-def speak_text(text, output_file="response.wav"):
+def speak_text(text, voice_data, output_file="response.wav"):
+    tone_hint = voice_style_from_analysis(voice_data)
+
     resp = client.chat.completions.create(
         model="higgs-audio-generation-Hackathon",
         messages=[
             {"role": "user", "content": text}
         ],
         modalities=["audio"],
-        max_completion_tokens=1024,
+        max_completion_tokens=2048,
         temperature=1.0,
-        top_p=0.95     # False if wait for full file
+        top_p=0.95,
+        extra_body={"tone_hint": tone_hint}
     )
     audio_b64 = resp.choices[0].message.audio.data
     with open(output_file, "wb") as f:
@@ -146,11 +220,16 @@ def main():
             if not transcript.strip():
                 print("⚠️ No speech detected.")
                 continue
+
+            voice_data = analyze_voice(audio_file)
             
             print(f"🧠 Transcript: {transcript}")
-            answer = generate_short_answer(transcript)
+            print(f"🎚️ Voice Analysis: Age={voice_data.get('estimated_age_group', 'unknown')}, "
+      f"Interest={voice_data.get('interest_level', 'unknown')}, "
+      f"Emotion={voice_data.get('emotional_tone', 'neutral')}")
+            answer = generate_short_answer(transcript, voice_data)
             print(f"🎤 Guide says: {answer}")
-            speak_text(answer)
+            speak_text(answer, voice_data)
             print("\n--- Listening for next question ---\n")
         except KeyboardInterrupt:
             print("Exiting MuseAI...")
