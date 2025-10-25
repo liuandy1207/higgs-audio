@@ -82,12 +82,25 @@ def text_to_speech(answer_text):
     return OUTPUT_WAV
 
 # ---------------- PLAY AUDIO ----------------
+import subprocess
+import sys
+import platform
+
 def play_audio(filename):
-    print(f"▶ Playing {filename}")
-    # macOS
-    subprocess.run(["afplay", filename])
-    # Linux: subprocess.run(["aplay", filename])
-    # Windows: subprocess.run(["powershell", "-c", f"(New-Object Media.SoundPlayer '{filename}').PlaySync();"])
+    system = platform.system()
+    print(f"▶ Playing {filename} on {system}")
+
+    if system == "Darwin":  # macOS
+        subprocess.run(["afplay", filename])
+    elif system == "Linux":  # Linux
+        subprocess.run(["aplay", filename])
+    elif system == "Windows":  # Windows
+        # Use powershell Media.SoundPlayer
+        cmd = f'(New-Object Media.SoundPlayer "{filename}").PlaySync();'
+        subprocess.run(["powershell", "-Command", cmd], shell=True)
+    else:
+        print("❌ Unsupported OS, cannot play audio.")
+
 
 # ---------------- MAIN LOOP ----------------
 def main():
