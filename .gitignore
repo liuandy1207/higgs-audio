@@ -204,3 +204,7 @@ result/
 #Bruce stuff
 tts/Input/*
 tts/Output/*
+
+# File types
+*.wav
+*.jpg
