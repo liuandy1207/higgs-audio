@@ -13,7 +13,6 @@ import re
 import subprocess
 import numpy as np
 import cv2
-from PIL import Image
 
 ###########################################################################
 #                         CONFIG AND PROMPTS
