@@ -1,3 +1,6 @@
+###########################################################################
+#                                IMPORTS
+###########################################################################
 import os
 import base64
 import time
@@ -7,22 +10,18 @@ from openai import OpenAI
 import re
 import subprocess
 import numpy as np
-import time
-
-# source .venv/bin/activate
 
 ###########################################################################
-#                                CONFIG
+#                         CONFIG AND PROMPTS
 ###########################################################################
-BOSON_API_KEY = os.getenv("BOSON_API_KEY") # do "export BOSON_API_KEY=****"
+BOSON_API_KEY = os.getenv("BOSON_API_KEY")
 if not BOSON_API_KEY:
     raise ValueError("Set BOSON_API_KEY in your environment variables.")
 client = OpenAI(api_key=BOSON_API_KEY, base_url="https://hackathon.boson.ai/v1")
 
-# Audio settings, all standard amounts for audio recordings
+# Audio settings
 SAMPLE_RATE = 16000
 CHANNELS = 1                
-RECORD_SECONDS = 5  # max length per recording
 
 # Program prompts
 PROGRAM_PROMPTS = """
@@ -35,49 +34,56 @@ PROGRAM_PROMPTS = """
 - Use the voice data to make the response better for the specific user and context (consider diction). 
 """
 BACKGROUND_KNOWLEDGE = "The Mona Lisa was painted by Leonardo DaVinci."
-# TONE_HINT = "friendly and informative" # make this better later
 
 ###########################################################################
 #                                HELPERS
 ###########################################################################
 
 def record_audio(
-    max_duration=10,           # hard cap, safety timeout
-    silence_threshold=500,     # loudness threshold to detect voice
-    silence_duration=2.0,      # stop 2s after silence
-    pre_speech_padding=0.3,    # record a bit before first speech
+    max_duration=10,           # safety timeout (seconds)
+    silence_threshold=600,     # loudness threshold to detect voice
+    silence_duration=2.0,      # silence time to stop recording
+    pre_speech_padding=0.5,    # time to keep in buffer
 ):
     print("🎙️ Waiting for speech...")
+    chunk_size = int(0.1 * SAMPLE_RATE)    # capture 0.1s per chunk
+    buffer = []                            # temp storage for capture audio before recording
+    recording = []                         # storage for the recording
+    silence_chunks = 0                     # counter for silent chunks
+    started = False                        # flag for recording start
+    start_time = time.time()               # timer for timeout
 
-    chunk_size = int(0.1 * SAMPLE_RATE)
-    buffer = []
-    recording = []
-    silence_chunks = 0
-    started = False
-    start_time = time.time()
-
+    # prepare stream for recording
     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16')
     try:
+        # starts stream
         with stream:
             while True:
+                # read a chunk
                 chunk, _ = stream.read(chunk_size)
+                # save the chunk to buffer
                 buffer.extend(chunk.flatten())
 
-                # Convert safely to float for RMS calculation
+                # convert audio to a float for more precision (from int16)
                 chunk_float = chunk.astype(np.float32)
+                # calculate rms (measure of loudness) to detect start of speech
                 rms = np.sqrt(np.mean(np.square(chunk_float)))
 
                 # detect start of speech
                 if not started and rms > silence_threshold:
                     started = True
                     print("🎤 Speech detected, recording...")
-                    recording.extend(buffer[-int(pre_speech_padding * SAMPLE_RATE):])  # include pre-speech
-                    buffer = []  # clear old buffer
-                    silence_chunks = 0
+                    # include pre-speech padding to the recording, so that information isnt cut-off
+                    recording.extend(buffer[-int(pre_speech_padding * SAMPLE_RATE):]) 
+                    buffer = []                 # clear old buffer
+                    silence_chunks = 0          # reset silence counter
 
+                # while recording
                 elif started:
+                    # add a chunk to the recording
                     recording.extend(chunk.flatten())
 
+                    # check for silence
                     if rms < silence_threshold:
                         silence_chunks += 1
                     else:
